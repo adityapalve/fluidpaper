@@ -189,9 +189,6 @@ fn chars_to_lines(mut chars: Vec<TextChar>, page_index: usize) -> Vec<Line> {
     let mut buckets: Vec<Vec<TextChar>> = Vec::new();
 
     for char in chars {
-        if char.ch.is_whitespace() {
-            continue;
-        }
         if let Some(last) = buckets.last_mut() {
             let last_top = average_top(last);
             if (last_top - char.top).abs() <= line_tolerance {
@@ -222,6 +219,13 @@ fn build_line(mut chars: Vec<TextChar>, page_index: usize) -> Option<Line> {
     let spacing_threshold = (font_size * 0.35).max(1.5);
 
     for char in &chars {
+        if char.ch.is_whitespace() {
+            if !text.ends_with(' ') && !text.is_empty() {
+                text.push(' ');
+            }
+            last_x1 = Some(char.x1);
+            continue;
+        }
         if let Some(prev_x1) = last_x1 {
             let gap = char.x0 - prev_x1;
             if gap > spacing_threshold && !text.ends_with(' ') {
@@ -304,25 +308,65 @@ fn detect_title(lines: &[Line], body_font_size: f32) -> Option<String> {
         return None;
     }
 
-    let max_font = first_page_lines
-        .iter()
-        .map(|line| line.font_size)
-        .fold(0.0, f32::max);
-
-    if max_font < body_font_size * 1.3 {
-        return None;
-    }
-
     first_page_lines.sort_by(|a, b| {
         b.top
             .partial_cmp(&a.top)
             .unwrap_or(Ordering::Equal)
     });
 
+    let candidate_lines: Vec<&Line> = first_page_lines
+        .iter()
+        .copied()
+        .filter(|line| {
+            let text = line.text.trim();
+            let word_count = text.split_whitespace().count();
+            word_count >= 4 && !(is_all_caps(text) && word_count <= 5)
+        })
+        .collect();
+
+    let max_title_font = candidate_lines
+        .iter()
+        .map(|line| line.font_size)
+        .fold(0.0, f32::max);
+    let font_threshold = (body_font_size * 1.1).max(max_title_font * 0.9);
+
+    if max_title_font < body_font_size * 1.1 {
+        return None;
+    }
+
     let mut title_parts = Vec::new();
+    let mut base_top: Option<f32> = None;
+    let mut base_font: Option<f32> = None;
+
     for line in first_page_lines {
-        if line.font_size >= max_font * 0.9 {
-            title_parts.push(line.text.trim().to_string());
+        let text = line.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let word_count = text.split_whitespace().count();
+        if line.font_size < font_threshold || word_count < 4 {
+            if base_top.is_some() {
+                break;
+            }
+            continue;
+        }
+        if is_all_caps(text) && word_count <= 5 {
+            continue;
+        }
+
+        if base_top.is_none() {
+            base_top = Some(line.top);
+            base_font = Some(line.font_size);
+            title_parts.push(text.to_string());
+            continue;
+        }
+
+        let top_gap = base_top.unwrap() - line.top;
+        if top_gap > body_font_size * 3.0 {
+            break;
+        }
+        if line.font_size >= base_font.unwrap() * 0.9 {
+            title_parts.push(text.to_string());
         }
     }
 
