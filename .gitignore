@@ -2,3 +2,4 @@
 .venv/
 target/
 vendor/pdfium/
+reader/.build/
